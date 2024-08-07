@@ -4,6 +4,7 @@ import jax
 import jax.numpy as jnp
 import jax.scipy.optimize
 import matplotlib.pyplot as plt
+import pathlib
 import optax
 from tqdm import tqdm
 
@@ -15,7 +16,7 @@ d_corr = 0.01 # correlation distance
 N = 20_000 # number of realisations
 m = 100 # number of surface receptors
 GRADIENT = jnp.array([0.0, 0.0, 0.0]) # gradient vector
-num_iters = 4_000
+num_iters = 25_000
 
 
 def expected_measurements(x, g):
@@ -68,7 +69,9 @@ def objective_fn(thetas, phis, key, sigma=0.1):
 def main():
     okey = jax.random.key(42)
     thetas, phis = jax.random.uniform(okey, (2, m), minval=0, maxval=2 * jnp.pi)
-    jnp.savez("initial.npz", thetas=thetas, phis=phis)
+
+    output_folder = pathlib.Path('outs')
+    output_folder.mkdir(exist_ok=True)
 
     optimizer = optax.adam(1e-3)
     opt_state = optimizer.init((thetas, phis))
@@ -86,6 +89,9 @@ def main():
         if jnp.isnan(error):
             break
 
+        if i % 100 == 0:
+            jnp.savez(output_folder/f"ckpt_{i}.npz", thetas=thetas, phis=phis)
+
         (thetas, phis) = optax.apply_updates((thetas, phis), update) # pyright: ignore
         thetas = thetas % (jnp.pi) # pyright: ignore
         phis = phis % (2*jnp.pi) # pyright: ignore
@@ -95,7 +101,8 @@ def main():
         error_prev = error
 
         metrics.append(error)
-    jnp.savez("final.npz", thetas=thetas, phis=phis)
+
+    jnp.savez(output_folder/"final.npz", thetas=thetas, phis=phis)
 
     plt.figure(dpi=300)
     plt.plot(metrics)
@@ -103,7 +110,7 @@ def main():
     plt.xlabel("Iteration")
     plt.ylabel("MSE")
     plt.tight_layout()
-    plt.savefig('error.png')
+    plt.savefig(output_folder/'error.png')
     plt.show()
 
 if __name__ == "__main__":
