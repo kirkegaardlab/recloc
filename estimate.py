@@ -59,9 +59,8 @@ def gradient_estimation_error(key, X, g):
 @partial(jax.value_and_grad, has_aux=True, argnums=(0, 1))
 def objective_fn(thetas, phis, key, sigma=0.1):
     X = to_cartesian(a, thetas, phis)
-    key, key2 = jax.random.split(key)
     keys = jax.random.split(key, N)
-    g_reals = jax.random.normal(key2, shape=(N, 3)) * sigma + GRADIENT
+    g_reals = jax.random.normal(key, shape=(N, 3)) * sigma + GRADIENT
     g_estimates = jax.vmap(gradient_estimation_error, in_axes=(0, None, 0))(keys, X, g_reals)
     error = jnp.mean((g_estimates - g_reals) ** 2, axis=0).mean()
     return error, (g_estimates, g_reals)
