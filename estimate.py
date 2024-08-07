@@ -72,6 +72,8 @@ def main():
 
     output_folder = pathlib.Path('outs')
     output_folder.mkdir(exist_ok=True)
+    output_folder = output_folder / str(len(list(output_folder.iterdir())))
+    output_folder.mkdir(exist_ok=True)
 
     optimizer = optax.adam(1e-3)
     opt_state = optimizer.init((thetas, phis))
@@ -90,19 +92,18 @@ def main():
             break
 
         if i % 100 == 0:
-            jnp.savez(output_folder/f"ckpt_{i}.npz", thetas=thetas, phis=phis)
+            jnp.savez(output_folder/f"ckpt_{i:06d}.npz", thetas=thetas, phis=phis)
 
         (thetas, phis) = optax.apply_updates((thetas, phis), update) # pyright: ignore
         thetas = thetas % (jnp.pi) # pyright: ignore
         phis = phis % (2*jnp.pi) # pyright: ignore
 
         if jnp.abs(error - error_prev) < rtol * jnp.abs(error) + atol:
+            jnp.savez(output_folder/f"ckpt_{i:06d}.npz", thetas=thetas, phis=phis)
             break
         error_prev = error
 
         metrics.append(error)
-
-    jnp.savez(output_folder/"final.npz", thetas=thetas, phis=phis)
 
     plt.figure(dpi=300)
     plt.plot(metrics)
