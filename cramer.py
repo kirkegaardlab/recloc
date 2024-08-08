@@ -11,12 +11,27 @@ from tqdm import tqdm
 jax.config.update("jax_enable_x64", True)
 
 a = 1.0 # radius of the cell
-c0 = 100.0 # constant offset in concentration
-d_corr = 0.01 # correlation distance
-N = 10_000 # number of realisations
-m = 100 # number of surface receptors
-GRADIENT = jnp.array([0.0, 0.0, 0.0]) # gradient vector
+c0 = 20.0 # constant offset in concentration
+s = 1e-4
+d_corr = 3 * s
+m = 1000 # number of surface receptors
+GRADIENT = jnp.array([10.0, 0.0, 0.0]) # gradient vector
 num_iters = 10_000
+
+
+def fibonacci_sphere(m):
+    phi = jnp.pi * (jnp.sqrt(5.) - 1.)
+    idxs = jnp.arange(m)
+    y = 1 - idxs / (m - 1) * 2
+    radius = jnp.sqrt(1 - y * y)
+    theta = phi * idxs
+
+    x = jnp.cos(theta) * radius
+    z = jnp.sin(theta) * radius
+
+    theta = jnp.arccos(z)
+    phi = jnp.arctan2(y, x)
+    return theta, phi
 
 
 def expected_measurements(x, g):
@@ -34,14 +49,6 @@ def covariance_measurements(X, variance, d_corr=d_corr):
     C = jnp.sqrt(variance[:, None] * variance[None, :]) * jnp.exp(-D / (2 * d_corr**2))
     return C
 
-
-def solve_gradient(sample, X, C):
-    C_inv = jnp.linalg.inv(C)
-    A = X.T @ C_inv @ X
-    b = X.T @ C_inv @ (sample - c0)
-    return jnp.linalg.solve(A, b)
-
-
 def to_cartesian(r, theta, phi):
     x = r * jnp.sin(theta) * jnp.cos(phi)
     y = r * jnp.sin(theta) * jnp.sin(phi)
@@ -49,29 +56,34 @@ def to_cartesian(r, theta, phi):
     return jnp.stack([x, y, z], axis=1)
 
 
-def gradient_estimation_error(key, X, g):
+def cramer_rao_bound(X, _, C):
+    I = X.T @ jnp.linalg.inv(C) @ X
+    uncertainty = jnp.linalg.inv(I)
+    return uncertainty
+
+
+def gradient_estimation_error(_, X, g):
+    X_hat = jnp.pad(X, ((0,0), (1,0)), constant_values=1)
     means = expected_measurements(X, g)
-    Cs = covariance_measurements(X, means) + 1e0 * jnp.eye(m)
-    measurements = jax.random.multivariate_normal(key, means, Cs, shape=())
-    estimates = solve_gradient(measurements, X, Cs)
-    return estimates
+    C = covariance_measurements(X, means)
+    variance_estimation = cramer_rao_bound(X_hat, means, C)
+    variance_estimation = jnp.diag(variance_estimation)[-3:]
+    return variance_estimation
+
 
 @jax.jit
 @partial(jax.value_and_grad, has_aux=True, argnums=(0, 1))
-def objective_fn(thetas, phis, key, sigma=0.1):
+def objective_fn(thetas, phis, key):
     X = to_cartesian(a, thetas, phis)
-    keys = jax.random.split(key, N)
-    g_reals = jax.random.normal(key, shape=(N, 3)) * sigma + GRADIENT
-    g_estimates = jax.vmap(gradient_estimation_error, in_axes=(0, None, 0))(keys, X, g_reals)
-    error = jnp.mean((g_estimates - g_reals) ** 2, axis=0).mean()
-    return error, (g_estimates, g_reals)
+    gradient_uncertainty = gradient_estimation_error(key, X, GRADIENT)
+    error = jnp.mean(gradient_uncertainty)
+    return error, gradient_uncertainty
+
 
 def main():
     okey = jax.random.key(42)
 
-    z = jax.random.normal(okey, (3, m))
-    thetas = jnp.arccos(z[2] / jnp.linalg.norm(z, axis=0))
-    phis = jnp.arctan2(z[1], z[0])
+    thetas, phis = fibonacci_sphere(m)
 
     output_folder = pathlib.Path('outs')
     output_folder.mkdir(exist_ok=True)
@@ -80,11 +92,11 @@ def main():
 
     optimizer = optax.adam(1e-3)
     opt_state = optimizer.init((thetas, phis))
-    rtol, atol, error_prev = 1e-8, 1e-10, jnp.inf
+    rtol, atol, error_prev = 1e-10, 1e-14, jnp.inf
     metrics = []
     for i in (bar := tqdm(range(num_iters), ncols=81)):
         key = jax.random.fold_in(okey, i)
-        (error, _), grads = objective_fn(thetas, phis, key, sigma=0.1)
+        (error, _), grads = objective_fn(thetas, phis, key)
 
         update, opt_state = optimizer.update(grads, opt_state)
         if i == 0:
@@ -102,6 +114,7 @@ def main():
         if jnp.abs(error - error_prev) < rtol * jnp.abs(error) + atol:
             jnp.savez(output_folder/f"ckpt_{i:06d}.npz", thetas=thetas, phis=phis)
             break
+
         error_prev = error
 
         metrics.append(error)

@@ -1,49 +1,41 @@
-import matplotlib.pyplot as plt
+import pathlib
 import numpy as np
-from scipy.stats import gaussian_kde
+import pyvista as pv
 
-from julius import to_cartesian, a
+a = 1.0
 
-
-
-data = np.load("initial.npz")
-initial = [data["thetas"], data["phis"]]
-
-
-data  = np.load("final.npz")
-final = [data["thetas"], data["phis"]]
+def to_cartesian(a, t, p):
+    x = a * np.sin(t) * np.cos(p)
+    y = a * np.sin(t) * np.sin(p)
+    z = a * np.cos(t)
+    return np.vstack([x, y, z]).T
 
 
-fig = plt.figure(dpi=300)
-for i, (t, p) in enumerate([initial, final]):
-    ax = plt.subplot(1, 2, i + 1, projection="3d")
-    u, v = np.meshgrid(np.linspace(0, 2 * np.pi, 2000), np.linspace(0, np.pi, 2000))
-    cx = a * np.cos(u) * np.sin(v)
-    cy = a * np.sin(u) * np.sin(v)
-    cz = a * np.cos(v)
+# Sort the datafiles by the step
+parent = pathlib.Path('outs/')
+folders = list(parent.iterdir())
+last_folder = sorted(folders, key=lambda x: int(x.stem.split("_")[0]))[-1]
+files = last_folder.glob("*.npz")
+files = sorted(files, key=lambda x: int(x.stem.split("_")[1]))
 
-    X = to_cartesian(a*1.05, t, p)
-
-    # Flatten the grid arrays
-    # Create grid points for the surface
-    cx_flat = cx.flatten()
-    cy_flat = cy.flatten()
-    cz_flat = cz.flatten()
-    grid_points = np.vstack([cx_flat, cy_flat, cz_flat])
-
-    # Use kernel density estimation to find density on the surface
-#    kde = gaussian_kde(X.T)
-#    density = kde(grid_points).reshape(cx.shape)
-#    density_normalized = (density - np.min(density)) / (np.max(density) - np.min(density))
+#files = ['initial.npz', 'directional.npz']
+#files = [pathlib.Path(f) for f in files]
 
 
-    # Plot the surface with the density colormap
-    #ax.plot_surface(cx, cy, cz, facecolors=plt.cm.Oranges(density_normalized))
-    ax.plot_surface(cx, cy, cz, alpha=1.0, color="gray", zorder=2)
-    ax.scatter(*X.T, color="blue", s=10, alpha=1.0, zorder=10)
+pl = pv.Plotter(shape=(1,2), window_size=[1800, 800])
+for i, file in enumerate([files[0], files[-1]]):
+    data = np.load(file)
+    t, p = data["thetas"], data["phis"]
 
-    l = 1.1 * a
-    ax.set(aspect="equal", xlim=(-l, l), ylim=(-l, l), zlim=(-l, l))
-    ax.set_axis_off()
+    pl.subplot(0, i)
+    points = np.array(to_cartesian(a, t, p))
+    pl.add_points(np.zeros((1, 3)), render_points_as_spheres=True, point_size=a * 430, color=[136, 212, 171])
+    pl.add_points(points, render_points_as_spheres=True, point_size=a*20, color=[255, 155, 133])
+    pl.add_axes()
 
-plt.show()
+pl.show()
+#viewup = [0, 1, 0]
+#path = pl.generate_orbital_path(factor=1.0, n_points=60, viewup=viewup)
+#pl.open_gif("orbit.gif")
+#pl.orbit_on_path(path, write_frames=True, viewup=viewup, step=1/30)
+#pl.close()
