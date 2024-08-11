@@ -2,7 +2,8 @@ import pathlib
 import numpy as np
 import pyvista as pv
 
-a = 1.0
+a = 1.0 # Sphere radius
+point_size = 0.2 # Size of the receptors relative to the sphere
 
 def to_cartesian(a, t, p):
     x = a * np.sin(t) * np.cos(p)
@@ -11,16 +12,10 @@ def to_cartesian(a, t, p):
     return np.vstack([x, y, z]).T
 
 
-# Sort the datafiles by the step
-parent = pathlib.Path('outs/')
-folders = list(parent.iterdir())
-last_folder = sorted(folders, key=lambda x: int(x.stem.split("_")[0]))[-1]
-files = last_folder.glob("*.npz")
+folders = list(pathlib.Path('outs').iterdir())
+last_folder = sorted(folders, key=lambda path: path.stat().st_ctime)[-1]
+files = last_folder.rglob("*.npz")
 files = sorted(files, key=lambda x: int(x.stem.split("_")[1]))
-
-#files = ['initial.npz', 'directional.npz']
-#files = [pathlib.Path(f) for f in files]
-
 
 pl = pv.Plotter(shape=(1,2), window_size=[1800, 800])
 for i, file in enumerate([files[0], files[-1]]):
@@ -29,13 +24,16 @@ for i, file in enumerate([files[0], files[-1]]):
 
     pl.subplot(0, i)
     points = np.array(to_cartesian(a, t, p))
-    pl.add_points(np.zeros((1, 3)), render_points_as_spheres=True, point_size=a * 430, color=[136, 212, 171])
-    pl.add_points(points, render_points_as_spheres=True, point_size=a*20, color=[255, 155, 133])
-    pl.add_axes()
 
+    # Add a sphere representing the cell
+    sphere = pv.Sphere(radius=a, center=(0, 0, 0))
+    pl.add_mesh(sphere, color=[136, 212, 171], smooth_shading=True)
+
+    # Add receptor points on the sphere's surface
+    receptors = pv.PolyData(points)
+    pl.add_mesh(receptors, render_points_as_spheres=True, point_size=point_size * 100, color=[255, 155, 133])
+    pl.add_axes()
+    pl.view_isometric()
+
+pl.link_views()
 pl.show()
-#viewup = [0, 1, 0]
-#path = pl.generate_orbital_path(factor=1.0, n_points=60, viewup=viewup)
-#pl.open_gif("orbit.gif")
-#pl.orbit_on_path(path, write_frames=True, viewup=viewup, step=1/30)
-#pl.close()
