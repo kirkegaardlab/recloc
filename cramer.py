@@ -1,7 +1,6 @@
 from datetime import datetime
 from functools import partial
 import pathlib
-
 import jax
 import jax.numpy as jnp
 import jax.scipy.optimize
@@ -10,11 +9,12 @@ import optax
 from tqdm import tqdm
 
 jax.config.update("jax_enable_x64", True)
+# jax.disable_jit()
 
 a = 1.0  # radius of the cell
-c0 = 100.0  # constant offset in concentration
+c0 = 15.0  # constant offset in concentration
 d_corr = 1e-3  # correlation distance
-m = 100  # number of surface receptors
+m = 200  # number of surface receptors
 GRADIENT = jnp.array([10.0, 0.0, 0.0])  # gradient vector
 num_iters = 10_000 # number of iterations
 
@@ -48,6 +48,26 @@ def covariance_measurements(X, variance, d_corr=d_corr):
     return C
 
 
+def covariance_measurements_derivative(X, variance, d_corr=d_corr):
+    D = cosine_distance(X, X)
+    exp_term = jnp.exp(-D / (2 * d_corr**2))
+
+    sqrt_term = 1 / (2 * jnp.sqrt(variance[:, None] * variance[None, :]))
+
+    C_c0 = (2 * c0 + (X @ GRADIENT)[:, None] + (X @ GRADIENT)[None, :])
+    C_gx = (X[:, 0][:, None] * (c0 + X @ GRADIENT)[None, :] 
+                      + X[:, 0][None, :] * (c0 + X @ GRADIENT)[:, None])
+    C_gy = (X[:, 1][:, None] * (c0 + X @ GRADIENT)[None, :] 
+                      + X[:, 1][None, :] * (c0 + X @ GRADIENT)[:, None])
+    C_gz = (X[:, 2][:, None] * (c0 + X @ GRADIENT)[None, :] 
+                      + X[:, 2][None, :] * (c0 + X @ GRADIENT)[:, None])
+
+    C_deriv = jnp.stack((C_c0, C_gx, C_gy, C_gz), axis=-1)
+
+    return C_deriv * (exp_term * sqrt_term)[..., None]
+
+
+
 def to_cartesian(r, theta, phi):
     x = r * jnp.sin(theta) * jnp.cos(phi)
     y = r * jnp.sin(theta) * jnp.sin(phi)
@@ -55,8 +75,16 @@ def to_cartesian(r, theta, phi):
     return jnp.stack([x, y, z], axis=1)
 
 
-def cramer_rao_bound(X, _, C):
-    I = X.T @ jnp.linalg.inv(C) @ X
+def cramer_rao_bound(X, means, C):
+    Cinv = jnp.linalg.inv(C)
+    I = X.T @ Cinv @ X
+    
+    C_deriv = covariance_measurements_derivative(X[:, -3:], means)
+    A = jnp.einsum('ij,jka->ika', Cinv, C_deriv)
+    B = jnp.einsum('ija,jkb->ikab', A, A)
+
+    I = I + 0.5 * jnp.trace(B)
+
     uncertainty = jnp.linalg.inv(I)
     return uncertainty
 
@@ -66,6 +94,7 @@ def gradient_estimation_error(X, g):
     means = expected_measurements(X, g)
     C = covariance_measurements(X, means)
     covariance_estimations = cramer_rao_bound(X_hat, means, C)
+
     variance_estimations = jnp.diag(covariance_estimations)[-3:]
     return variance_estimations
 
@@ -93,6 +122,9 @@ def main():
     metrics = []
     for i in (bar := tqdm(range(num_iters), ncols=81)):
         error, grads = objective_fn(thetas, phis)
+
+        # exit()
+
 
         if i == 0:
             tqdm.write(f"Initial error: {error:.5g}")
