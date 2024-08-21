@@ -13,13 +13,11 @@ from tqdm import tqdm
 jax.config.update("jax_enable_x64", True)
 
 a = 1.0  # radius of the cell
-c0 = 100.0  # constant offset in concentration
+c0 = 15.0  # constant offset in concentration
 D_CORR = 0.002  # correlation distance
-M = 100  # number of surface receptors
-GRADIENT = jnp.array([00.0, 00.0, 10.0])  # gradient vector
-MAX_ITER = 100_000  # number of maximum iterations
-harm_degree = [3]  # degree of the spherical harmonic (l >= m)
-harm_order = 1  # spherical harmonic order (m)
+M = 420  # number of surface receptors
+GRADIENT = jnp.array([12.0, 0.0, 00.0])  # gradient vector
+MAX_ITER = 10_000  # number of maximum iterations
 
 
 def fibonacci_sphere(n):
@@ -70,9 +68,26 @@ def gradient_estimation_error(X, g):
     variance_estimations = jnp.diag(covariance_estimations)
     return variance_estimations
 
-
-def to_cartesian(a, theta, phi):
-    r = a + jnp.real(jax.scipy.special.sph_harm(harm_order, harm_degree, phi, theta))
+harm_degree = 4  # degree of the spherical harmonic (l >= m)
+harm_order = 2  # spherical harmonic order (m)
+def to_cartesian(a, theta, phi, alpha=0.0):
+    sphe = (harm_degree, harm_order)
+    #r = a + jnp.real(jax.scipy.special.sph_harm(harm_order, harm_degree, phi, theta))
+    if sphe == (2, 0):
+        Y = 1/4 * jnp.sqrt(5/jnp.pi) * (3*jnp.cos(theta)**2 - 1.0)
+    elif sphe == (3, 1):
+        Y = -1/8 * jnp.sqrt(21/jnp.pi) * jnp.cos(phi) * jnp.sin(theta) * (5*jnp.cos(theta)**2-1)
+    elif sphe == (3, 2):
+        Y = 1/4 * jnp.sqrt(105/(jnp.pi*2)) * jnp.cos(2*phi) * jnp.sin(theta)**2 * jnp.cos(theta)
+    elif sphe == (4,2):
+        Y = 3/8 * jnp.sqrt(5/(2*jnp.pi)) * jnp.cos(2*phi) * jnp.sin(theta)**2 * (7*jnp.cos(theta)**3 - 3 * jnp.cos(theta))
+    elif sphe == (5, 3):
+        Y = 3/256 * jnp.sqrt(5005/(2*jnp.pi)) * jnp.cos(4*phi) * jnp.sin(theta)**4 * (323*jnp.cos(theta)**6 - 255*jnp.cos(theta)**4 + 45*jnp.cos(theta)**2 -1)
+    elif sphe == (6, 4):
+        Y = jnp.cos(-5 * phi) * jnp.sin(theta)**5
+    else:
+        Y = 0
+    r = a + alpha * Y
     x = r * jnp.sin(theta) * jnp.cos(phi)
     y = r * jnp.sin(theta) * jnp.sin(phi)
     z = r * jnp.cos(theta)
@@ -81,8 +96,8 @@ def to_cartesian(a, theta, phi):
 
 @jax.jit
 @partial(jax.value_and_grad, argnums=(0, 1))
-def objective_fn(thetas, phis):
-    X = to_cartesian(a, thetas, phis)
+def objective_fn(thetas, phis, alpha):
+    X = to_cartesian(a, thetas, phis, alpha)
     gradient_uncertainty = gradient_estimation_error(X, GRADIENT)
     error = gradient_uncertainty.sum()
     return error
@@ -107,31 +122,34 @@ def main():
     opt_state = optimizer.init((thetas, phis))
     rtol, atol, error_prev = 1e-10, 1e-14, jnp.inf
     metrics = []
-    for i in (bar := tqdm(range(MAX_ITER), ncols=81)):
-        error, grads = objective_fn(thetas, phis)
+    step = 0
+    for alpha in jnp.sin(jnp.linspace(0, jnp.pi, 30)):
+        for i in (bar := tqdm(range(MAX_ITER), ncols=81)):
+            step += 1
+            error, grads = objective_fn(thetas, phis, alpha)
 
-        if i == 0:
-            tqdm.write(f"Initial error: {error:.5g}")
-        bar.set_description(f"Loss: {error:.5g}")
+            if i == 0:
+                tqdm.write(f"Initial error (alpha={alpha:.2g}): {error:.5g}")
+            bar.set_description(f"Loss: {error:.5g}")
 
-        if jnp.isnan(error):
-            tqdm.write("NaN detected. Exiting...")
-            break
+            if jnp.isnan(error):
+                tqdm.write("NaN detected. Exiting...")
+                break
 
-        if i % 10 == 0:
-            jnp.savez(ckpt_folder / f"ckpt_{i:06d}.npz", thetas=thetas, phis=phis)
+            if i % 50 == 0:
+                jnp.savez(ckpt_folder / f"ckpt_{step:06d}.npz", thetas=thetas, phis=phis, alpha=alpha, error=error)
 
-        update, opt_state = optimizer.update(grads, opt_state, (thetas, phis))
-        (thetas, phis) = optax.apply_updates((thetas, phis), update)  # pyright: ignore
-        thetas = thetas % jnp.pi
-        phis = phis % (2 * jnp.pi)
+            update, opt_state = optimizer.update(grads, opt_state, (thetas, phis))
+            (thetas, phis) = optax.apply_updates((thetas, phis), update)  # pyright: ignore
+            thetas = jnp.arccos(jnp.cos(thetas))
+            phis = phis % (2 * jnp.pi)
 
-        if jnp.abs(error - error_prev) < rtol * jnp.abs(error) + atol:
-            jnp.savez(ckpt_folder / f"ckpt_{i:06d}.npz", thetas=thetas, phis=phis)
-            break
+            if jnp.abs(error - error_prev) < rtol * jnp.abs(error) + atol:
+                jnp.savez(ckpt_folder / f"ckpt_{step:06d}.npz", thetas=thetas, phis=phis, alpha=alpha, error=error)
+                break
 
-        error_prev = error
-        metrics.append(error)
+            error_prev = error
+            metrics.append(error)
 
     plt.figure(dpi=300)
     plt.plot(metrics)

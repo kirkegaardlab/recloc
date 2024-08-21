@@ -1,7 +1,9 @@
 import argparse
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import json
 import pathlib
 
+import imageio.v2 as imagio
 import numpy as np
 import pyvista as pv
 import scipy.spatial
@@ -29,8 +31,8 @@ with open(last_folder/'params.json', 'r') as f:
     harm_degree = params["harm_degree"]
     gradient = np.array(params["gradient"])
 
-def to_cartesian(r, theta, phi):
-    r = a + np.real(scipy.special.sph_harm(harm_order, harm_degree, phi, theta))
+def to_cartesian(r, theta, phi, alpha=1):
+    r = a + alpha * np.real(scipy.special.sph_harm(harm_order, harm_degree, phi, theta))
     x = r * np.sin(theta) * np.cos(phi)
     y = r * np.sin(theta) * np.sin(phi)
     z = r * np.cos(theta)
@@ -38,18 +40,21 @@ def to_cartesian(r, theta, phi):
 
 comparison_files = [files[0], files[-1]]
 
-t, p = np.meshgrid(np.linspace(0, np.pi, 1000), np.linspace(0, 2*np.pi, 1000))
-surface_points = to_cartesian(a, t, p).reshape(-1, 3)
-surface_cloud = pv.PolyData(surface_points)
+thetas = np.linspace(0, np.pi, 100)
+phis = np.linspace(0, 2*np.pi, 100)
+thetas, phis = np.meshgrid(thetas, phis)
 arrow = pv.Arrow(np.array([1.8*a, 0, 0]), np.array(gradient)/np.linalg.norm(gradient), scale=0.8)
 
 pl = pv.Plotter(shape=(1,2), window_size=[1800, 800])
 for i, file in enumerate(comparison_files):
     pl.subplot(0, i)
-    pl.add_mesh(surface_cloud, color=CELL_COLOR)
-    pl.add_mesh(arrow)
     data = np.load(file)
-    points = np.array(to_cartesian(a, data["thetas"], data["phis"]))
+    surface_points = to_cartesian(a, thetas, phis, alpha=data['alpha'])
+    grid = pv.StructuredGrid(*surface_points.T)
+    surface_mesh = grid.extract_geometry().clean()
+    pl.add_mesh(surface_mesh, color=CELL_COLOR, smooth_shading=True, opacity=0.8)
+    pl.add_mesh(arrow)
+    points = np.array(to_cartesian(a, data["thetas"], data["phis"], data["alpha"]))
     receptors = pv.PolyData(points)
     pl.add_mesh(receptors, render_points_as_spheres=True, point_size=point_size * 100, color=RECEPTOR_COLOR)
     pl.add_axes()
@@ -60,21 +65,48 @@ pl.show()
 if not args.animate:
     exit()
 
-pl = pv.Plotter(window_size=[800, 800], off_screen=False)
-pl.add_mesh(surface_cloud, color=CELL_COLOR)
-pl.add_mesh(arrow)
-data = np.load(files[0])
-points = np.array(to_cartesian(a, data["thetas"], data["phis"]))
-receptors = pv.PolyData(points)
-pl.add_mesh(receptors, render_points_as_spheres=True, point_size=point_size * 100, color=RECEPTOR_COLOR)
-pl.add_axes()
-pl.isometric_view()
-pl.open_gif(last_folder / "animation.gif")
-for f in tqdm(files[1:], ncols=81):
-    data = np.load(f)
-    pl.title_text = f"Frame: {f.stem}"
-    new_points = to_cartesian(a, data["thetas"], data["phis"])
-    receptors.points = new_points
-    pl.write_frame()
-pl.close()
+frames_folder = last_folder / "frames"
+frames_folder.mkdir(exist_ok=True)
+
+def plot_cell(file):
+    data = np.load(file)
+
+    pl = pv.Plotter(window_size=[800, 800], off_screen=True)
+
+    thetas = np.linspace(0, np.pi, 100)
+    phis = np.linspace(0, 2*np.pi, 100)
+    thetas, phis = np.meshgrid(thetas, phis)
+    surface_points = to_cartesian(a, thetas, phis, alpha=data['alpha'])
+    grid = pv.StructuredGrid(*surface_points.T)
+    surface_mesh = grid.extract_geometry().clean()
+    pl.add_mesh(surface_mesh, color=CELL_COLOR, opacity=0.7)
+
+    arrow = pv.Arrow(np.array([1.8*a, 0, 0]), np.array(gradient)/np.linalg.norm(gradient), scale=0.8)
+    pl.add_mesh(arrow)
+
+    points = to_cartesian(a, data["thetas"], data["phis"], data["alpha"])
+    receptors = pv.PolyData(points)
+    pl.add_mesh(receptors, render_points_as_spheres=True, point_size=point_size * 100, color=RECEPTOR_COLOR)
+
+    pl.add_text(f"Error: {data['error']:.5g}", position="upper_edge", font_size=12)
+
+    pl.add_axes()
+    pl.isometric_view()
+
+    pl.screenshot(frames_folder/f'{file.stem}.png')
+    pl.close()
+
+if __name__ == "__main__":
+
+    with ProcessPoolExecutor() as executor:
+        tasks = [executor.submit(plot_cell, file) for file in files]
+        for result in tqdm(as_completed(tasks), total=len(tasks), ncols=81):
+            pass
+
+
+    images = list(frames_folder.glob("*.png"))
+    images = sorted(images, key=lambda x: int(x.stem.split("_")[1]))
+    images = [imageio.imread(str(image)) for image in images]
+    imageio.mimsave(last_folder / "animation.mp4", images, fps=30)
+
 
