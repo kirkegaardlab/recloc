@@ -2,6 +2,11 @@
 >[!NOTE]
 > This is the code for the paper "Optimal Cell-Surface Receptor Location for Spatial Gradient Sensing".
 
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/2b5d425a-2791-46f2-bea5-07fcb39ba3e6" height="420" />
+</p>
+
+
 # Setup
 Create a virtual enviorment and install the required packages using the following commands:
 ```bash
