@@ -1,17 +1,3 @@
-"""
-This is the most generic script on this repository.
-It is used to optimize the position of the receptors on the cell surface
-to estimate the concentration gradient.
-
-This describes the base model, and does not include multiple runs to test parameters.
-
-Note: JAX spherical harmonics implementation is not working. The hacky way here is to manually set
-the spherical harmonics to the desired degree and order.
-
-Author: Albert Alonso
-Date: 2024-09-01
-"""
-from functools import partial
 import json
 import os
 import pathlib
@@ -26,13 +12,13 @@ from tqdm import tqdm
 jax.config.update("jax_enable_x64", True)
 
 # Parameters
-a = 1.0  # radius of the cell (um)
+R = 1.0  # radius of the cell
+a = 1e-4 # sensor size 
 c0 = 500.0  # constant offset in concentration (molecules/um^3)
-D = 100  # diffusion coefficient (um^2/s)
-tau = 1e-6  # measurement time (s)
-D_CORR = 4 * D * tau  # correlation distance (Diffusion * measurement time)
-M = 500  # number of surface receptors (N)
-GRADIENT = jnp.array([10.0, 0.0, 00.0])  # gradient vector (molecules/um^3/um)
+D = 0.1  # diffusion coefficient (um^2/s)
+tau = 10  # measurement time (s)
+N = 500  # number of surface receptors (N)
+GRADIENT = jnp.array([10.0, 0.0, 00.0])  # gradient vector (molecules/um^3)
 MAX_ITER = 10_000  # number of maximum iterations
 perturbation_strength = 1.0
 harm_degree = 3  # degree of the spherical harmonic (l >= m)
@@ -55,15 +41,18 @@ def fibonacci_sphere(n):
 
 
 def cramer_rao_bound(X, G):
-    mu = X @ G  # X={x_0, ..., x_M}, x_i=(1, x, y, z), G=(c0, g_x, g_y, g_z)
-    sigmas = jnp.sqrt(mu)
-    scales = jnp.sum((X[:, None] - X[None, :]) ** 2, axis=-1) / (4 * D * tau)
-    # We approximate the Eq.(3) with the following exponential since the 
-    # exponential integral function yields nan gradients.
-    # spatial_corr = exp(-λ) + λ expint(-λ) ≈ exp(-2λ)
-    spatial_corr = jnp.exp(-2*scales)
-    cov = (sigmas[:, None] + sigmas[None, :]) / 2 * spatial_corr
+    c = X @ G  # X={x_0, ..., x_M}, x_i=(1, x, y, z), G=(c0, g_x, g_y, g_z)
+
+    # Compute the distance matrix (careful with gradients of the square root)
+    d2 = jnp.sum((X[:, None] - X[None, :]) ** 2, axis=-1)
+    d = jnp.sqrt(d2 + jnp.eye(len(X))) * (1 - jnp.eye(len(X)))
+
+    # Compute the covariance matrix (Eq.3 in the paper)
+    spatial_corr = 4 * a**3 / (5 * a + 6 * d) * (1/(D*tau))
+    cov = (c[:, None] + c[None, :]) / 2  * spatial_corr
     cov_inv = jnp.linalg.inv(cov)
+
+    # Compute the Cramer-Rao lower bound with the Fisher information matrix
     cov_part_deriv = spatial_corr[...,None] / 2 * (X[:, None] + X[None, :])
     A = jnp.einsum("ij,jka->ika", cov_inv, cov_part_deriv)
     B = jnp.einsum("ija,jkb->ikab", A, A)
@@ -78,9 +67,11 @@ def gradient_estimation_covariances(X, g):
     return cramer_rao_bound(X_hat, G_hat)
 
 
-def to_cartesian(a, theta, phi, alpha=0.0):
-    sphe = (harm_degree, harm_order)
+def to_cartesian(theta, phi, alpha=0.0):
+    # JAX has a bug on the gradient of the spherical harmonics, we use the analytical expression.
     # r = a + jnp.real(jax.scipy.special.sph_harm(harm_order, harm_degree, phi, theta))
+
+    sphe = (harm_degree, harm_order)
     if sphe == (2, 0):
         Y = 1 / 4 * jnp.sqrt(5 / jnp.pi) * (3 * jnp.cos(theta) ** 2 - 1.0)
     elif sphe == (2, 2):
@@ -101,7 +92,8 @@ def to_cartesian(a, theta, phi, alpha=0.0):
         Y = 3 / 32 * jnp.sqrt(385 / (2 * jnp.pi)) * jnp.cos(4 * phi) * jnp.sin(theta) ** 4 * (13 * jnp.cos(theta) ** 3 - 3 * jnp.cos(theta))
     else:
         Y = 0
-    r = a * (1 + alpha * Y)
+
+    r = R * (1 + alpha * Y)
     x = r * jnp.sin(theta) * jnp.cos(phi)
     y = r * jnp.sin(theta) * jnp.sin(phi)
     z = r * jnp.cos(theta)
@@ -109,25 +101,27 @@ def to_cartesian(a, theta, phi, alpha=0.0):
 
 
 @jax.jit
-@partial(jax.value_and_grad, argnums=(0, 1))
-def objective_fun(thetas, phis):
-    X = to_cartesian(a, thetas, phis, alpha=perturbation_strength)
+def estimation_uncertainity(thetas, phis):
+    X = to_cartesian(thetas, phis, alpha=perturbation_strength)
     estimation_covariance = gradient_estimation_covariances(X, GRADIENT)
     return jnp.trace(estimation_covariance)
 
 
 if __name__ == "__main__":
 
-    thetas, phis = fibonacci_sphere(M)
+    thetas, phis = fibonacci_sphere(N)
 
     # Create the output folder (clean it if it exists)
     output_folder = pathlib.Path("outputs")
-    if not output_folder.exists():
+    if output_folder.exists():
         os.system(f"rm -rf {output_folder}/*")
     ckpt_folder = output_folder / "checkpoints"
     ckpt_folder.mkdir(parents=True, exist_ok=True)
     params = {"harm_order": harm_order,"harm_degree": harm_degree}
     (output_folder / "params.json").write_text(json.dumps(params, indent=4))
+
+    g0 = estimation_uncertainity(thetas, phis)
+    loss_fn = jax.value_and_grad(lambda t, p: estimation_uncertainity(t, p)/g0, argnums=(0,1))
 
     # Initialise the optimizer and begin the optimization process
     optimizer = optax.adam(learning_rate)
@@ -135,7 +129,7 @@ if __name__ == "__main__":
     rtol, atol, error_prev = 1e-9, 1e-10, jnp.inf
     metrics = []
     for i in (bar := tqdm(range(MAX_ITER), ncols=81)):
-        error, grads = objective_fun(thetas, phis)
+        error, grads = loss_fn(thetas, phis)
 
         if i == 0:
             tqdm.write(f"Initial error (N={len(thetas)}): {error:.5g}")
