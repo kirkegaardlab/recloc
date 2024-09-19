@@ -17,7 +17,7 @@ a = 1e-4 # sensor size
 c0 = 500.0  # constant offset in concentration (molecules/um^3)
 D = 0.1  # diffusion coefficient (um^2/s)
 tau = 10  # measurement time (s)
-N = 500  # number of surface receptors (N)
+N = 1_000  # number of surface receptors (N)
 GRADIENT = jnp.array([10.0, 0.0, 00.0])  # gradient vector (molecules/um^3)
 MAX_ITER = 10_000  # number of maximum iterations
 perturbation_strength = 1.0
@@ -70,29 +70,19 @@ def gradient_estimation_covariances(X, g):
 def to_cartesian(theta, phi, alpha=0.0):
     # JAX has a bug on the gradient of the spherical harmonics, we use the analytical expression.
     # r = a + jnp.real(jax.scipy.special.sph_harm(harm_order, harm_degree, phi, theta))
-
-    sphe = (harm_degree, harm_order)
-    if sphe == (2, 0):
-        Y = 1 / 4 * jnp.sqrt(5 / jnp.pi) * (3 * jnp.cos(theta) ** 2 - 1.0)
-    elif sphe == (2, 2):
-        Y = 1 / 4 * jnp.sqrt(15 / (2 * jnp.pi)) * jnp.cos(2 * phi) * jnp.sin(theta) ** 2
-    elif sphe == (3, 1):
-        Y = (-1/8 * jnp.sqrt(21 / jnp.pi) * jnp.cos(phi) * jnp.sin(theta) * (5 * jnp.cos(theta) ** 2 - 1))
-    elif sphe == (3, 2):
-        Y = (1 / 4 * jnp.sqrt(105 / (jnp.pi * 2)) * jnp.cos(2 * phi) * jnp.sin(theta) ** 2 * jnp.cos(theta))
-    elif sphe == (4, 2):
-        Y = (3 / 8 * jnp.sqrt(5 / (2 * jnp.pi)) * jnp.cos(2 * phi) * jnp.sin(theta) ** 2 * (7 * jnp.cos(theta) ** 3 - 3 * jnp.cos(theta)))
-    elif sphe == (5, 3):
-        Y = 3/ 256 * jnp.sqrt(5005 / (2 * jnp.pi)) * jnp.cos(4 * phi) * jnp.sin(theta) ** 4 * (323 * jnp.cos(theta) ** 6 - 255 * jnp.cos(theta) ** 4 + 45 * jnp.cos(theta) ** 2 - 1)
-    elif sphe == (6, 0):
-        Y = ( 1 / 32 * jnp.sqrt(13 / jnp.pi) * ( 231 * jnp.cos(theta) ** 6 - 315 * jnp.cos(theta) ** 4 + 105 * jnp.cos(theta) ** 2 - 5))
-    elif sphe == (6, 4):
-        Y = 3 / 32 * jnp.sqrt(91 / (2 * jnp.pi)) * jnp.cos(4 * phi) * jnp.sin(theta) ** 4 * (11 * jnp.cos(theta) ** 2 - 1)
-    elif sphe == (7, 4):
-        Y = 3 / 32 * jnp.sqrt(385 / (2 * jnp.pi)) * jnp.cos(4 * phi) * jnp.sin(theta) ** 4 * (13 * jnp.cos(theta) ** 3 - 3 * jnp.cos(theta))
-    else:
-        Y = 0
-
+    sphe_harms = {
+            (2, 0): 1 / 4 * jnp.sqrt(5 / jnp.pi) * (3 * jnp.cos(theta) ** 2 - 1.0),
+            (2, 2): 1 / 4 * jnp.sqrt(15 / (2 * jnp.pi)) * jnp.cos(2 * phi) * jnp.sin(theta) ** 2,
+            (3, 1): -1/8 * jnp.sqrt(21 / jnp.pi) * jnp.cos(phi) * jnp.sin(theta) * (5 * jnp.cos(theta) ** 2 - 1),
+            (3, 2): 1/4 * jnp.sqrt(105 / (jnp.pi * 2)) * jnp.cos(2 * phi) * jnp.sin(theta) ** 2 * jnp.cos(theta),
+            (4, 2): 3/8 * jnp.sqrt(5 / (2 * jnp.pi)) * jnp.cos(2 * phi) * jnp.sin(theta) ** 2 * (7 * jnp.cos(theta) ** 3 - 3 * jnp.cos(theta)),
+            (4, 3): -3/8 * jnp.sqrt(35/jnp.pi) * jnp.cos(3*phi) * jnp.sin(theta)**3 * jnp.cos(theta),
+            (5, 3): 3/256 * jnp.sqrt(5005 / (2 * jnp.pi)) * jnp.cos(4 * phi) * jnp.sin(theta) ** 4 * (323 * jnp.cos(theta) ** 6 - 255 * jnp.cos(theta) ** 4 + 45 * jnp.cos(theta) ** 2 - 1),
+            (6, 0): 1/32 * jnp.sqrt(13 / jnp.pi) * (231 * jnp.cos(theta) ** 6 - 315 * jnp.cos(theta) ** 4 + 105 * jnp.cos(theta) ** 2 - 5),
+            (6, 4): 3/32 * jnp.sqrt(91 / (2 * jnp.pi)) * jnp.cos(4 * phi) * jnp.sin(theta) ** 4 * (11 * jnp.cos(theta) ** 2 - 1),
+            (7, 4): 3/32 * jnp.sqrt(385 / (2 * jnp.pi)) * jnp.cos(4 * phi) * jnp.sin(theta) ** 4 * (13 * jnp.cos(theta) ** 3 - 3 * jnp.cos(theta)),
+            }
+    Y = sphe_harms.get((harm_degree, harm_order), 0)
     r = R * (1 + alpha * Y)
     x = r * jnp.sin(theta) * jnp.cos(phi)
     y = r * jnp.sin(theta) * jnp.sin(phi)
