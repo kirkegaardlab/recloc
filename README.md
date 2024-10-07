@@ -1,6 +1,8 @@
 # Optimal Location for Surface sensors in 3D geometries
+[![arXiv](https://img.shields.io/badge/arXiv-2410.03395-b31b1b.svg?style=flat)](https://arxiv.org/abs/2410.03395)
+
 >[!NOTE]
-> This is the code for the paper "Optimal Cell-Surface Receptor Location for Spatial Gradient Sensing".
+> This is the code for the paper [Receptors cluster in high-curvature membrane regions for optimal spatial gradient sensing](https://arxiv.org/abs/2410.03395).
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/6608f412-981e-4d9a-8244-e5aa2f052857" height="450" />
@@ -26,10 +28,6 @@ and to visualize the results, use the following command:
 ```bash
 python visual.py
 ```
-
-# Project structure
-
-The different experiments (setups) for the figures are on the [experiments](experiments/) directory.
 
 # License
 
