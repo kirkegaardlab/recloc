@@ -1,8 +1,12 @@
-# Optimal Location for Surface sensors in 3D geometries
+# Local Clustering and Global Spreading of Receptors for Optimal Spatial Gradient Sensing
+
+[![Physical Review Letters (PRL)](https://img.shields.io/badge/PRL-10.1103/PhysRevLett.134.158401-990000?style=flat)](https://doi.org/10.1103/PhysRevLett.134.158401)
 [![arXiv](https://img.shields.io/badge/arXiv-2410.03395-b31b1b.svg?style=flat)](https://arxiv.org/abs/2410.03395)
 
->[!NOTE]
-> This is the code for the paper [Receptors cluster in high-curvature membrane regions for optimal spatial gradient sensing](https://arxiv.org/abs/2410.03395).
+This repository contains the code used in our [Physical Review Letters](https://doi.org/10.1103/PhysRevLett.134.158401) paper:
+
+> **Local Clustering and Global Spreading of Receptors for Optimal Spatial Gradient Sensing**  
+> Albert Alonso, Robert G. Endres, J. B. Kirkegaard
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/6608f412-981e-4d9a-8244-e5aa2f052857" height="450" />
@@ -15,20 +19,19 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
-Note that the requirements.txt contain the cuda12 version of JAX.
-
+>[!NOTE]
+> requirements.txt installs the CUDA 12-compatible version of JAX. Modify this if you're using CPU-only or a different CUDA version.
 
 # Run
-To run the code, use the following command:
+Run the core simulation:
 ```bash
 python cramer.py
 ```
 
-and to visualize the results, use the following command:
+Visualize the results:
 ```bash
 python visual.py
 ```
 
 # License
-
-MIT License
+This code is released under the MIT License.
